@@ -25,15 +25,17 @@ jobs:
       - name: Start Cloudflare Tunnel
         run: |
           nohup cloudflared tunnel --url http://localhost:6080 --no-autoupdate > tunnel.log 2>&1 & 
-          sleep 10
+          sleep 40
           grep -o 'https://[-0-9a-z]*\.trycloudflare.com' tunnel.log > remote.txt
           cat remote.txt
 
-      - name: Upload remote.txt
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-link
-          path: remote.txt
+      - name: Commit remote.txt to repo
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+          git add remote.txt
+          git commit -m "Add remote.txt with Cloudflare URL" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref }}
 
       - name: Keep Alive
         run: sleep 21600   # giữ 6 tiếng (max cho GitHub Actions free)
