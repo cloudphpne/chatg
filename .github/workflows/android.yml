@@ -32,7 +32,7 @@ env:
   # tham số từ input
   DEVICE_NAME: ${{ github.event.inputs.device || 'Samsung Galaxy S10' }}
   SCREEN_WIDTH: ${{ github.event.inputs.width  || '1080' }}
-  SCREEN_HEIGHT:${{ github.event.inputs.height || '1920' }}
+  SCREEN_HEIGHT: ${{ github.event.inputs.height || '1920' }}
   RAM_MB:        ${{ github.event.inputs.memory_mb || '4096' }}
   CPU_CORES:     ${{ github.event.inputs.cores || '4' }}
 
