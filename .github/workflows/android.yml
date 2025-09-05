@@ -1,4 +1,4 @@
-name: Android 9 (Docker-Android) — noVNC + Cloudflare URL
+name: Android 9 
 
 on:
   workflow_dispatch:
