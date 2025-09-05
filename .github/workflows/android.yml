@@ -1,0 +1,39 @@
+name: Android 9 Emulator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+
+      - name: Run Android 9 Emulator (Docker)
+        run: |
+          docker run -d --privileged \
+            -p 6080:6080 \
+            --name android9 \
+            budtmo/docker-android:emulator_9.0
+
+      - name: Start Cloudflare Tunnel
+        run: |
+          nohup cloudflared tunnel --url http://localhost:6080 --no-autoupdate > tunnel.log 2>&1 & 
+          sleep 10
+          grep -o 'https://[-0-9a-z]*\.trycloudflare.com' tunnel.log > remote.txt
+          cat remote.txt
+
+      - name: Upload remote.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-link
+          path: remote.txt
+
+      - name: Keep Alive
+        run: sleep 21600   # giữ 6 tiếng (max cho GitHub Actions free)
