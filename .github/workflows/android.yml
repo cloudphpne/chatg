@@ -1,163 +1,59 @@
-name: Android 9 
-permissions:
-  contents: write
+name: Android 9 Emulator (Nexus 5 - Stable)
+
 on:
   workflow_dispatch:
-    inputs:
-      device:
-        description: 'Thiết bị mô phỏng'
-        required: false
-        default: 'Samsung Galaxy S10'
-      width:
-        description: 'Chiều rộng màn hình'
-        required: false
-        default: '1080'
-      height:
-        description: 'Chiều cao màn hình'
-        required: false
-        default: '1920'
-      memory_mb:
-        description: 'RAM cho emulator (MB)'
-        required: false
-        default: '4096'
-      cores:
-        description: 'Số CPU cores'
-        required: false
-        default: '4'
 
-env:
-  IMAGE_TAG: emulator_9.0                             # Android 9
-  CONTAINER_NAME: android9
-  NOVNC_PORT: 6080
-  ADB_PORT: 5555
-  # tham số từ input
-  DEVICE_NAME: ${{ github.event.inputs.device || 'Samsung Galaxy S10' }}
-  SCREEN_WIDTH: ${{ github.event.inputs.width  || '1080' }}
-  SCREEN_HEIGHT: ${{ github.event.inputs.height || '1920' }}
-  RAM_MB:        ${{ github.event.inputs.memory_mb || '4096' }}
-  CPU_CORES:     ${{ github.event.inputs.cores || '4' }}
+permissions:
+  contents: write   # cho phép push file vào repo
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true    # dùng token mặc định của GitHub Actions
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: Pull Docker-Android (Android 9)
+      - name: Start Android 9 Nexus 5
         run: |
-          docker pull budtmo/docker-android:${IMAGE_TAG}
+          docker run -d --name android -p 6080:6080 \
+            -e DEVICE="Nexus 5" \
+            budtmo/docker-android-x86-9.0
 
-      - name: Run Docker-Android (noVNC)
+      - name: Start Cloudflare Tunnel
         run: |
-          # Dọn container cũ nếu có
-          docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+          nohup cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
+          sleep 10
+          grep -o 'https://.*trycloudflare.com' tunnel.log > remote.txt || echo "Tunnel failed" > remote.txt
+          echo "==== Remote URL ===="
+          cat remote.txt
 
-          # Khởi chạy container
-          docker run -d --privileged \
-            --name ${CONTAINER_NAME} \
-            -p ${NOVNC_PORT}:6080 \
-            -p ${ADB_PORT}:5555 \
-            -e EMULATOR_DEVICE="${DEVICE_NAME}" \
-            -e WEB_VNC=true \
-            -e APPIUM=false \
-            -e CONNECT_TO_GRID=false \
-            -e SCREEN_WIDTH=${SCREEN_WIDTH} \
-            -e SCREEN_HEIGHT=${SCREEN_HEIGHT} \
-            -e SCREEN_DEPTH=24 \
-            -e EMULATOR_ARGS="-memory ${RAM_MB} -cores ${CPU_CORES} -gpu swiftshader_indirect -noaudio -no-boot-anim -partition-size 2048 -netdelay none -netspeed full" \
-            --shm-size=2g \
-            budtmo/docker-android:${IMAGE_TAG}
-
-          echo "Container started. Waiting initial boot..."
-          # chờ container mở noVNC nội bộ xong (tránh 502)
-          for i in {1..90}; do
-            if curl -fsS http://localhost:${NOVNC_PORT}/ >/dev/null 2>&1; then
-              echo "noVNC is up (local) after $i checks."
-              break
+      - name: Recheck origin via tunnel (avoid 502)
+        run: |
+          url=$(cat remote.txt)
+          echo "Checking origin via $url ..."
+          for i in {1..5}; do
+            if curl -s -o /dev/null -w "%{http_code}" "$url" | grep -q "200"; then
+              echo "Tunnel is OK"
+              exit 0
             fi
-            sleep 2
-            if [ $i -eq 90 ]; then
-              echo "noVNC did not become ready in time"; exit 1
-            fi
+            echo "Retrying in 5s..."
+            sleep 5
           done
+          echo "502 error likely"
+          exit 1
 
-      - name: Download Cloudflared (portable)
+      - name: Commit remote.txt to repo
         run: |
-          curl -L --retry 5 --retry-delay 2 \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            -o cloudflared
-          chmod +x cloudflared
-          ./cloudflared --version || true
-
-      - name: Start Cloudflare Tunnel → grab URL
-        id: tunnel
-        run: |
-          # chạy nền
-          nohup ./cloudflared tunnel --url http://localhost:${NOVNC_PORT} --no-autoupdate > tunnel.log 2>&1 &
-          # đợi và lấy URL
-          for i in {1..120}; do
-            URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log | head -1 || true)
-            if [ -n "$URL" ]; then
-              echo "url=$URL" >> $GITHUB_OUTPUT
-              echo "Public URL: $URL"
-              break
-            fi
-            sleep 1
-          done
-          if [ -z "$URL" ]; then
-            echo "Failed to obtain Cloudflare URL"; tail -n +1 tunnel.log; exit 1
-          fi
-
-      - name: Recheck origin behind tunnel (avoid 502)
-        run: |
-          echo "Checking origin via tunnel..."
-          for i in {1..40}; do
-            if curl -fsS "${{ steps.tunnel.outputs.url }}" >/dev/null 2>&1; then
-              echo "Tunnel → origin OK."
-              break
-            fi
-            sleep 3
-            if [ $i -eq 40 ]; then
-              echo "Origin not reachable via tunnel (possible 502)."; exit 1
-            fi
-          done
-
-      - name: Write remote.txt and commit to repo
-        run: |
-          echo "${{ steps.tunnel.outputs.url }}" > remote.txt
-          echo "Device: ${DEVICE_NAME}" >> remote.txt
-          echo "Resolution: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}" >> remote.txt
-          echo "RAM: ${RAM_MB}MB | Cores: ${CPU_CORES}" >> remote.txt
-          echo "Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> remote.txt
-
-          git config user.name  "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-
-          # luôn ghi đè 1 file duy nhất, commit gọn sạch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add remote.txt
-          git commit -m "update remote.txt (Android 9 URL)" || echo "no changes"
-          # đẩy lên đúng nhánh đang chạy
-          git push origin HEAD:${GITHUB_REF_NAME}
-
-      - name: Show URL
-        run: |
-          echo "===================================================="
-          echo "Open Android 9 in your browser:"
-          cat remote.txt | head -1
-          echo "===================================================="
+          git commit -m "update remote.txt (Android 9 Nexus 5 URL)" || echo "No changes to commit"
+          git push
 
       - name: Keep Alive (up to 6h)
-        run: sleep 21600
-
-      # ---- Debug & Postmortem (giúp bắt bệnh lỗi 502, luôn chạy) ----
-      - name: Debug — docker & tunnel logs
-        if: always()
         run: |
-          echo "=== docker ps -a ==="; docker ps -a || true
-          echo "=== docker logs (last 200 lines) ==="; docker logs --tail 200 ${CONTAINER_NAME} || true
-          echo "=== tunnel.log (last 100 lines) ==="; tail -n 100 tunnel.log || true
+          echo "Keeping emulator alive for 6h..."
+          for i in {1..36}; do
+            echo "Minute $((i*10))..."
+            sleep 600
+          done
