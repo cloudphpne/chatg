@@ -1,0 +1,5 @@
+https://assuming-continental-riders-enforcement.trycloudflare.com
+Device: Samsung Galaxy S10
+Resolution: 1080x1920
+RAM: 4096MB | Cores: 4
+Generated: 2025-09-05T13:25:55Z
